@@ -1,18 +1,18 @@
 # SLIM-XA: Cross-Attention Extended SLIM for Audio Deepfake Detection
 
-> An extension of [SLIM (arXiv 2407.18517)](https://arxiv.org/abs/2407.18517) that replaces the fixed L2 mismatch measure with a learned **bidirectional cross-attention module** — producing directional residual features that are more discriminative for audio deepfake detection.
+> An extension of [SLIM (NeurIPS 2024, arXiv 2407.18517)](https://arxiv.org/abs/2407.18517) that replaces the fixed L2 mismatch measure with a learned **bidirectional cross-attention module**, producing directional residual features intended to make the style-linguistics mismatch signal more discriminative (not yet ablated against the SLIM baseline).
 
-**Results on ASVspoof 2019 LA Evaluation Set (50% data, 1 GPU, no augmentation):**
+**Results on ASVspoof 2019 LA Evaluation Set (50% stratified subset, attack labels A07–A19, 1 GPU, no augmentation):**
 
 | Metric | SLIM (paper) | SLIM-XA (ours) |
 |--------|:-----------:|:--------------:|
-| EER | 0.60% | **2.62%** |
-| F1 Score | 0.969 | **0.985** |
-| Accuracy | — | 97.37% |
-| Precision | — | 0.997 |
-| Recall | — | 0.974 |
+| EER | 0.60% | 22.37% |
+| Accuracy | — | 90% |
+| Fake-speech recall | — | 99.98% |
 
-> The EER gap vs. the paper is due to training conditions (50% data, single Titan Xp, no SpecAug). The F1 improvement demonstrates the added discriminative power of the cross-attention residuals.
+> - **EER is the primary metric.** It does not depend on a decision threshold. Accuracy and fake-speech recall are measured at a single operating threshold (see [Section 8](#8-results)).
+> - The test subset is ~90% fake (31,941 of 35,618 utterances), so a classifier that labels everything as fake would score ≈89.7% accuracy. Accuracy and fake-speech recall alone are therefore not informative.
+> - SLIM-XA does **not** reach the paper's EER. The setups also differ (50% of the data, one GPU, no augmentation, different Stage 1 data; see the comparison table in Section 8). No ablation has been run to isolate the cause of the gap, and these results do not show that cross-attention improves over SLIM.
 
 ---
 
@@ -32,7 +32,7 @@
 
 ## 1. What is SLIM?
 
-**SLIM (Style-Linguistics Mismatch Model)** exploits a fundamental property of human speech: real speech has a natural, learned dependency between *style* (emotion, speaker identity, prosody) and *linguistics* (word content). TTS and voice-conversion systems synthesize these independently — sampling from separate latent spaces — creating an artificial inconsistency that is attack-agnostic and therefore generalizable to unseen spoofing methods.
+**SLIM (Style-Linguistics Mismatch Model)** builds on the observation that real speech has a natural, learned dependency between *style* (emotion, speaker identity, prosody) and *linguistics* (word content). TTS and voice-conversion systems synthesize these independently, which, according to the SLIM paper, introduces an artificial style-linguistics dependency that differs from real speech and helps generalization to unseen spoofing methods.
 
 SLIM uses:
 - A frozen **style encoder** (Wav2Vec2-XLSR-SER, layers 0–10) to capture paralinguistic style
@@ -50,17 +50,17 @@ SLIM-XA replaces the fixed Euclidean distance (L2/cosine) mismatch measure with 
 style_pred  = Attn(Q=style_dep, KV=ling_dep)   # what style does linguistics predict?
 ling_pred   = Attn(Q=ling_dep,  KV=style_dep)   # what content does style predict?
 
-style_res   = LayerNorm(style_dep - style_pred)  # unexplained style → large for TTS
-ling_res    = LayerNorm(ling_dep  - ling_pred)   # unexplained content → large for VC
+style_res   = LayerNorm(style_dep - style_pred)  # unexplained style (expected to be larger for TTS)
+ling_res    = LayerNorm(ling_dep  - ling_pred)   # unexplained content (expected to be larger for VC)
 ```
 
 These **two directional residual streams** are trained in Stage 1 and frozen in Stage 2, raising the total feature dimension from **1024 (SLIM)** to **1536 (SLIM-XA)**.
 
-**Why this is better than L2/cosine:**
-- **Directional:** captures distinct failure modes of TTS (large `style_res`) vs. VC (large `ling_res`)
+**Motivation (hypotheses, not yet validated by ablation):**
+- **Directional:** may capture distinct failure modes of TTS (large `style_res`) vs. VC (large `ling_res`)
 - **Learns the dependency manifold:** attends over the temporal sequence rather than assuming Euclidean proximity
-- **Richer Stage 2 features:** two extra 256-dim streams orthogonal to existing ones
-- **Interpretable:** attention weights reveal which time steps are correlated in real vs. fake speech
+- **Richer Stage 2 features:** two additional 256-dim streams
+- **Potentially interpretable:** attention weights could show which time steps are correlated in real vs. fake speech (not yet analyzed)
 
 ---
 
@@ -220,7 +220,7 @@ python -c "import torch; print('CUDA:', torch.cuda.is_available(), '|', torch.cu
 | Val | ASVspoof 2019 LA dev | 12,422 | 1,274 | 11,148 |
 | Test | ASVspoof 2019 LA eval | 35,618 | 3,677 | 31,941 |
 
-The eval set contains **13 unseen attack types (A07–A19)** not present in training — a genuine test of generalization.
+The eval set uses attack labels A07–A19, none of which appear among the training attack labels (A01–A06), so it tests generalization to attack systems not seen in training.
 
 ### Expected Data Layout
 
@@ -306,7 +306,7 @@ Saves `outputs/stage2_best.pt`.
 python -m src.eval.evaluate_stage2 --threshold-mode eer
 ```
 
-Outputs to `outputs/eval/eer_threshold/`:
+Outputs to `outputs/eval/threshold_eer/`:
 - `metrics_summary.json` — EER, F1, accuracy, precision, recall
 - `predictions.csv` — per-sample scores
 
@@ -359,23 +359,19 @@ python -m src.eval.visualize_metrics
 
 ### ASVspoof 2019 LA Evaluation Set
 
+50% stratified subset: 35,618 utterances (3,677 real / 31,941 fake).
+
 | Metric | Value |
 |--------|:-----:|
-| EER | **2.62%** |
-| F1 Score | **0.985** |
-| Accuracy | 97.37% |
-| Precision | 0.997 |
-| Recall | 0.974 |
-| Decision threshold (EER) | 2.01 × 10⁻¹⁰ |
+| EER | **22.37%** |
+| Accuracy | 90% |
+| Fake-speech recall | 99.98% |
+| Decision threshold (accuracy / recall) | [fill in from your final evaluation run] |
 
-### Confusion Matrix (35,618 test samples)
-
-| | Predicted REAL | Predicted FAKE |
-|--|:-:|:-:|
-| **Actual REAL** (3,677) | 3,581 | 96 |
-| **Actual FAKE** (31,941) | 841 | 31,100 |
-
-Miss rate = 2.63% · False alarm rate = 2.61% — balanced, consistent with EER threshold.
+**How to read these numbers**
+- **EER** is threshold-independent and is the primary metric for this task.
+- **Accuracy and fake-speech recall** depend on the decision threshold and on class balance. A classifier that labels every utterance as fake would reach ≈89.7% accuracy and 100% fake-speech recall on this subset, so these two numbers should not be read as evidence of detection quality on their own.
+- The results come from a single configuration. No ablation (for example SLIM without cross-attention under identical training conditions) has been run.
 
 ### Comparison: SLIM vs SLIM-XA
 
@@ -383,14 +379,21 @@ Miss rate = 2.63% · False alarm rate = 2.61% — balanced, consistent with EER 
 |--|--|--|
 | Mismatch signal | L2/cosine distance | Cross-attention residuals ★ |
 | Feature streams | 4 × 256 = 1024-dim | 6 × 256 = 1536-dim ★ |
-| EER | 0.60% | 2.62% |
-| F1 | 0.969 | **0.985** |
-| Training data | 100%, 4 GPUs, + SpecAug | **50%, 1 GPU, no augmentation** |
+| EER (ASVspoof 2019 LA eval) | 0.60% | 22.37% |
+| Evaluation set | Full eval set (71,237 utterances) | 50% stratified subset (35,618 utterances) |
+| Stage 1 data | Common Voice + RAVDESS | ASVspoof 2019 LA train (bonafide) + MILABS |
+| Stage 2 training data | Full ASVspoof 2019 LA train | 50% of ASVspoof 2019 LA train |
+| Compute | 4 GPUs | 1 GPU (Titan Xp) |
+| Stage 2 augmentation | Noise, Reverb, SpecAug | None |
 
-### Key Hyperparameter Corrections (vs. original buggy code)
+SLIM (paper) figures are for the frozen-frontend "Full" variant, averaged over three seeds, as reported in the SLIM paper.
 
-| Parameter | Original (wrong) | SLIM-XA (paper-aligned) |
-|-----------|:----------------:|:-----------------------:|
+### Configuration changes from the initial implementation
+
+The current code follows the SLIM paper's hyperparameters (Table 5). The table lists what changed from the first version of this codebase.
+
+| Parameter | Initial implementation | Current |
+|-----------|:----------------------:|:-------:|
 | Optimizer | Adam | AdamW (wd=1e-4) |
 | LR schedule | None | Linear decay + 5% warmup |
 | λ (intra-subspace) | 0.1 | **0.007** |
@@ -399,6 +402,8 @@ Miss rate = 2.63% · False alarm rate = 2.61% — balanced, consistent with EER 
 | Audio length | 2 s | **5 s** |
 | Gradient clipping | None | max_norm=1.0 |
 
+The Stage 2 data augmentation used in the paper (Noise, Reverb, SpecAug) is not implemented here.
+
 ---
 
 ## 9. Citation
@@ -406,11 +411,11 @@ Miss rate = 2.63% · False alarm rate = 2.61% — balanced, consistent with EER 
 If you use this work, please cite the original SLIM paper:
 
 ```bibtex
-@article{slim2024,
-  title   = {SLIM: Style-Linguistics Mismatch Model for Generalized Audio Deepfake Detection},
-  author  = {Reality Defender},
-  journal = {arXiv preprint arXiv:2407.18517},
-  year    = {2024}
+@inproceedings{zhu2024neurips-slim,
+  title     = {{SLIM: Style-Linguistics Mismatch Model for Generalized Audio Deepfake Detection}},
+  author    = {Zhu, Yi and Koppisetti, Surya and Tran, Trang and Bharaj, Gaurav},
+  booktitle = {Neural Information Processing Systems},
+  year      = {2024}
 }
 ```
 
