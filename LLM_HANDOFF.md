@@ -1,5 +1,7 @@
-# LLM Handoff Document — SLIM-CSAI Project
+# LLM Handoff Document — SLIM-XA Project
 ## Complete context for continuing this project with another LLM
+
+> **Naming:** SLIM-CSAI is the internal name used in the code and in this document for SLIM-XA (the name used in the README). CSAI = Cross-Subspace Attention Inconsistency.
 
 ---
 
@@ -7,9 +9,9 @@
 
 **Task:** Audio deepfake detection — classify speech as REAL (human) or FAKE (TTS/voice-conversion generated).
 
-**Base paper:** "SLIM: Style-Linguistics Mismatch Model for Generalized Audio Deepfake Detection" (arXiv 2407.18517, Reality Defender, Jul 2024).
+**Base paper:** "SLIM: Style-Linguistics Mismatch Model for Generalized Audio Deepfake Detection" (Zhu, Koppisetti, Tran, Bharaj; Reality Defender; NeurIPS 2024; arXiv 2407.18517).
 
-**Our contribution:** We extended SLIM with a novel module called **CSAI (Cross-Subspace Attention Inconsistency)** and corrected several implementation bugs from the original codebase.
+**Our contribution:** We extended SLIM with a module called **CSAI (Cross-Subspace Attention Inconsistency)** and corrected several implementation bugs from the first version of the codebase.
 
 ---
 
@@ -20,7 +22,7 @@ Real speech has a natural dependency between:
 - **Style** (emotion, speaker identity, prosody) — encoded by Wav2Vec2-XLSR-SER (emotion recognition), layers 0–10
 - **Linguistics** (verbal content) — encoded by Wav2Vec2-XLSR-ASR (speech recognition), layers 14–21
 
-TTS/VC systems model style and content **independently**, creating an artificial mismatch.
+TTS/VC systems model style and content **independently**, which the SLIM paper argues creates an artificial mismatch.
 
 SLIM learns compressed "dependency features" via a two-stage pipeline:
 - **Stage 1:** Self-supervised on real speech only — trains compression modules to align style and linguistic subspaces
@@ -32,31 +34,30 @@ Instead of measuring mismatch with a fixed L2/cosine distance (SLIM's approach),
 ```
 style_pred  = CrossAttn(Q=style_dep, KV=ling_dep)   # what style does ling predict?
 ling_pred   = CrossAttn(Q=ling_dep,  KV=style_dep)  # what content does style predict?
-style_res   = style_dep - style_pred                 # unexplained style   → large for fake
-ling_res    = ling_dep  - ling_pred                  # unexplained content → large for fake
+style_res   = style_dep - style_pred                 # unexplained style   (expected to be larger for fake)
+ling_res    = ling_dep  - ling_pred                  # unexplained content (expected to be larger for fake)
 ```
 
 The residuals (`style_res`, `ling_res`) are additional features for Stage 2 — increasing feature dimension from 1024 to **1536**.
 
-**Why better than L2:**
-1. Directional (style→ling ≠ ling→style, captures different failure modes of TTS vs VC)
-2. Learns the actual dependency manifold from real speech rather than assuming Euclidean proximity
-3. Attention weights are interpretable (show which time steps are correlated)
+**Hypothesized advantages (unvalidated; no ablation has been run):**
+1. Directional (style→ling ≠ ling→style), which may capture different failure modes of TTS vs VC
+2. Learns a dependency model from real speech rather than assuming Euclidean proximity
+3. Attention weights could be used for interpretation (not yet analyzed)
 
 ---
 
 ## 3. Environment
 
-- **Conda env:** `wildspoof_sasv`
-- **Python:** `/home/princeverma/miniconda3/envs/wildspoof_sasv/bin/python`
+- **Conda env:** `slim_xa` (Python 3.9; see README for setup)
 - **PyTorch:** 2.2.2 (CUDA compatible with Titan Xp, sm_61)
-- **GPU:** NVIDIA Titan Xp, 11 GB VRAM, CUDA available ✓
+- **GPU:** NVIDIA Titan Xp, 11 GB VRAM
 - **Key packages:** torch 2.2.2, transformers 4.57.6, librosa 0.11.0, scikit-learn, pandas, tqdm, soundfile, matplotlib
 
 **Activate with:**
 ```bash
-conda activate wildspoof_sasv
-cd "/media/princeverma/044e2d0c-caca-4d10-867b-0cc38ebc5ac4/wildspoof_dataset/new dataset/slim/SLIM"
+conda activate slim_xa
+cd <repo-root>
 ```
 
 ---
@@ -95,8 +96,8 @@ SLIM/
 │   ├── stage2_val.csv                   # 12,422 samples
 │   └── stage2_test.csv                  # 35,618 samples
 ├── outputs/
-│   ├── stage1_best.pt                   # Stage 1 checkpoint (if trained)
-│   ├── stage2_best.pt                   # Stage 2 checkpoint (if trained)
+│   ├── stage1_best.pt                   # Stage 1 checkpoint
+│   ├── stage2_best.pt                   # Stage 2 checkpoint
 │   ├── eval/                            # Evaluation artifacts (.npz, .json, .csv)
 │   └── plots/                           # Visualization outputs
 ├── AVSSPOOF_2019/ASVSpoof_2019/LA/LA/   # ASVspoof 2019 LA dataset (.flac files)
@@ -119,6 +120,8 @@ SLIM/
 | MILABS m_ailabs_mlaad train/real | ~5,600 (50%) | Multi-lingual emotional speech; adds stylistic diversity to Stage 1 |
 | **Total** | **6,890** | |
 
+(The SLIM paper used Common Voice and RAVDESS for Stage 1, so Stage 1 data differ from the paper.)
+
 ### Stage 2 (real + fake — supervised)
 | Split | Source | Samples (50%) | Real | Fake |
 |-------|--------|--------------|------|------|
@@ -127,6 +130,8 @@ SLIM/
 | Test | ASVspoof 2019 LA eval | 35,618 | 3,677 | 31,941 |
 
 **Why 50%:** Reduces training time ~50% while preserving class balance (stratified sampling per class).
+
+**Class imbalance:** the test subset is ~90% fake (31,941 of 35,618). A classifier that labels everything fake would score ≈89.7% accuracy, so report EER as the primary metric.
 
 **MLAAD:** Not used in training — 38 language fake-only dataset, reserved for future out-of-domain evaluation.
 
@@ -202,8 +207,8 @@ attn_loss = ||style_residual||² + ||ling_residual||²  # minimized for real in 
 
 ```bash
 # 0. Activate environment
-conda activate wildspoof_sasv
-cd "/media/princeverma/044e2d0c-caca-4d10-867b-0cc38ebc5ac4/wildspoof_dataset/new dataset/slim/SLIM"
+conda activate slim_xa
+cd <repo-root>
 
 # 1. Check GPU
 python -c "import torch; print('CUDA:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
@@ -260,6 +265,7 @@ python -m src.infer.predict_audio --audio path/to/audio.wav --threshold 0.5
 3. **Data augmentation in Stage 2** — paper used Noise/Reverb/SpecAug. Not implemented.
 4. **Baseline comparison** — no W2V-ASP or other baseline implemented for comparison table.
 5. **Cross-domain generalization numbers** — In-the-wild dataset not available locally.
+6. **Investigate the EER gap and ablate CSAI** — EER (22.37%) is far above the paper's SLIM result (0.60%). Candidate causes (none tested): 50% of the data, no augmentation, different Stage 1 data, Stage 2 batch size of 2, single seed. Next step: train the SLIM baseline (4 streams, no cross-attention) under identical conditions and compare EER, so that any effect of the cross-attention module can be isolated.
 
 ---
 
@@ -268,18 +274,25 @@ python -m src.infer.predict_audio --audio path/to/audio.wav --threshold 0.5
 In order of importance:
 1. `PROJECT_DESCRIPTION.md` — logical rationale for every design decision
 2. `ARCHITECTURE_FLOWCHART.md` — full ASCII flowchart of Stage 1 and Stage 2
-3. `src/models/cross_subspace_attention.py` — the novel CSAI module (~80 lines)
+3. `src/models/cross_subspace_attention.py` — the CSAI module (~80 lines)
 4. `src/models/stage2_slim.py` — full Stage 2 model with 6 feature streams
 5. `src/losses/stage1_loss.py` — exact Algorithm 1 implementation
 6. `RUN_SEQUENCE.md` — step-by-step run commands
 
 ---
 
-## 11. Expected Results After Training
+## 11. Results (final run)
 
-Based on the paper's Table 2 for the "Full" SLIM variant (frozen frontend):
-- **ASVspoof 2019 eval:** EER ~0.6%, F1 ~0.969
-- **CSAI should match or improve** on out-of-domain data because residuals provide
-  a more discriminative mismatch signal than fixed L2 distance
+ASVspoof 2019 LA evaluation set, 50% stratified subset (35,618 utterances: 3,677 real / 31,941 fake), attack labels A07–A19:
 
-Current checkpoints in `outputs/` are from the **old (wrong) codebase** — retrain from scratch using the run sequence above.
+| Metric | Value |
+|--------|:-----:|
+| EER | **22.37%** |
+| Accuracy | 90% |
+| Fake-speech recall | 99.98% |
+| Decision threshold (accuracy / recall) | [fill in from your final evaluation run] |
+
+- **EER is the primary metric.** Accuracy and fake-speech recall are measured at a single threshold and are strongly affected by class imbalance (an all-fake classifier scores ≈89.7% accuracy on this subset).
+- **Paper reference:** SLIM (frozen frontend, full eval set, 4 GPUs, SpecAug, mean of 3 seeds) reports EER 0.60% and F1 0.969 on ASVspoof 2019 LA. SLIM-XA does not reach this.
+- **Claims guidance for future work:** do not state that CSAI improves on SLIM. No ablation against the SLIM baseline has been run, and the setups differ from the paper (see Section 9, item 6).
+- These results come from checkpoints trained with the current (corrected) codebase using the run sequence in Section 7.
