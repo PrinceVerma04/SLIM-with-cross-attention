@@ -95,7 +95,7 @@ def main():
     model = Stage2SLIM().to(device)
 
     # Load Stage 1 checkpoint
-    ckpt = torch.load(args.stage1_ckpt, map_location=device)
+    ckpt = torch.load(args.stage1_ckpt, map_location=device, weights_only=True)
     model.style_compression.load_state_dict(ckpt["style_compression"])
     model.ling_compression.load_state_dict(ckpt["ling_compression"])
     model.cross_attn.load_state_dict(ckpt["cross_attn"])

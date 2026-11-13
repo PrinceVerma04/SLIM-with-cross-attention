@@ -58,7 +58,7 @@ def main():
     )
 
     model = Stage2SLIM().to(device)
-    model.load_state_dict(torch.load("outputs/stage2_best.pt", map_location=device))
+    model.load_state_dict(torch.load("outputs/stage2_best.pt", map_location=device, weights_only=True))
     model.eval()
 
     criterion = nn.BCEWithLogitsLoss()
